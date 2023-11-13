@@ -1,0 +1,33 @@
+#!/bin/bash
+
+# Pull ESCAPE voms and place in /etc/vomses/
+wget https://indigo-iam.github.io/escape-docs/voms-config/voms-escape.cloud.cnaf.infn.it.vomses -O /etc/vomses/voms-escape.cloud.cnaf.infn.it.vomses
+
+# We have to copy the certificates because we cannot change permissions on them as mounted secrets and voms-proxy is particular about permissions
+cp /opt/rucio/certs/{{ USERCERT_NAME }} /tmp/cert.pem
+cp /opt/rucio/keys/{{ USERKEY_NAME }} /tmp/key.pem
+chmod 600 /tmp/cert.pem
+chmod 600 /tmp/key.pem
+
+# Generate a proxy with the voms extension if requested and check for a specified passphrase for the key
+{% if GRID_PASSPHRASE is defined %}
+echo $GRID_PASSPHRASE | voms-proxy-init2 --debug -rfc -valid 96:00 -bits 2048 -cert /tmp/cert.pem -key /tmp/key.pem -out /tmp/x509up {% if RUCIO_FTS_VOMS is defined -%}-voms {{ RUCIO_FTS_VOMS }}{%- endif %} -timeout 5
+{% else %}
+voms-proxy-init2 --debug -rfc -valid 96:00 -bits 2048 -cert /tmp/cert.pem -key /tmp/key.pem -out /tmp/x509up {% if RUCIO_FTS_VOMS is defined -%}-voms {{ RUCIO_FTS_VOMS }}{%- endif %} -timeout 5
+{% endif %}
+
+# Delegate the proxy to the requested servers
+{% if RUCIO_FTS_SERVERS is defined %}
+{% set ftses = RUCIO_FTS_SERVERS.split(',') %}
+{% for fts in ftses %}
+fts-rest-delegate -v -f -H 96 --key=/tmp/x509up --cert=/tmp/x509up -s {{ fts }}
+{% endfor %}
+{% endif %}
+
+# Create the corresponding kubernetes secrets if asked
+{% if RUCIO_FTS_SECRETS is defined %}
+{% set secrets = RUCIO_FTS_SECRETS.split(',') %}
+{% for secret in secrets %}
+kubectl create secret generic  {{ secret }} --from-file=/tmp/x509up --dry-run=client -o yaml | kubectl apply --validate=false  -f  -
+{% endfor %}
+{% endif %}

@@ -1,0 +1,12 @@
+dists:
+  - id: centos7
+    allow:
+      python:
+        - "3.6"
+        - "3.7"
+python:
+  - "3.6"
+suites:
+  - integration-test
+image_identifier:
+  - integration-test

@@ -1,0 +1,57 @@
+dists:
+  - id: centos7
+    allow:
+      python:
+        - "3.6"
+        - "3.7"
+    deny:
+      suites:
+        - sqlite
+  - id: fedora32
+    allow:
+      python:
+        - "3.8"
+  - id: fedora33
+    allow:
+      python:
+        - "3.9"
+python:
+  - "3.6"
+  - id: "3.7"
+    allow:
+      suites:
+        - py37py38
+  - id: "3.8"
+    allow:
+      suites:
+        - py37py38
+        - client
+        - sqlite
+  - "3.9"
+suites:
+  - id: syntax
+    SYNTAX_REPORT: 1
+    RUN_HTTPD: false
+  - id: docs
+    RUN_HTTPD: false
+  - id: client_syntax
+    RUN_HTTPD: false
+  - id: client
+    RDBMS: sqlite
+  - id: remote_dbs
+    RDBMS:
+      - oracle
+      - mysql8
+      - postgres14
+    services:
+      - influxdb_elastic
+  - id: sqlite
+    RDBMS:
+      - sqlite
+  - id: multi_vo
+    RDBMS: postgres14
+    RUCIO_HOME: /opt/rucio/etc/multi_vo/tst
+  - id: py37py38
+    RDBMS: postgres14
+image_identifier:
+  - autotest

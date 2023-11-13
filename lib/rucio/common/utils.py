@@ -709,6 +709,14 @@ def extract_scope_dirac(did, scopes):
     return scope, did
 
 
+def extract_scope_cta(did, scopes):
+    # Default dirac scope extract algorithm. Scope is the second element in the LFN or the first one (VO name)
+    # if only one element is the result of a split.
+    print("extract_scope method cta")
+    scope = "test"
+    return scope, did
+
+
 def extract_scope_belleii(did, scopes):
     split_did = did.split('/')
     if did.startswith('/belle/mock/'):
@@ -793,6 +801,7 @@ def register_extract_scope_algorithm(extract_callable, name=[]):
 register_extract_scope_algorithm(extract_scope_atlas, 'atlas')
 register_extract_scope_algorithm(extract_scope_belleii, 'belleii')
 register_extract_scope_algorithm(extract_scope_dirac, 'dirac')
+register_extract_scope_algorithm(extract_scope_cta, 'cta')
 
 
 def extract_scope(did, scopes=None, default_extract=_DEFAULT_EXTRACT):

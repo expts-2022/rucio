@@ -1,0 +1,256 @@
+name: docker-auto-build
+
+on:
+  release: 
+    types: [created]
+  workflow_dispatch:
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        context: [
+          'clients, prepend-rucio, prepend-release, push-tagged, push-latest', 
+          'server, prepend-rucio, prepend-release, push-tagged, push-latest',
+          'server/alma9.Dockerfile, prepend-rucio, prepend-release, push-tagged, custom-tag=-alma9',
+          'daemons, prepend-rucio, prepend-release, push-tagged, push-latest',
+          'daemons/alma9.Dockerfile, prepend-rucio, prepend-release, push-tagged, custom-tag=-alma9',
+          'dev, prepend-rucio, prepend-release, push-tagged, push-latest',
+          'ui, prepend-rucio, prepend-release, push-tagged, push-latest',
+          'webui, prepend-rucio, prepend-release, push-tagged, push-latest',
+          'init, prepend-rucio, prepend-release, push-tagged, push-latest',
+          'probes, push-tagged, push-latest',
+          'fts, push-tagged, push-latest',
+          'fts-cron/Dockerfile_cpp, push-tagged, push-latest',
+          'fts-cron/Dockerfile_java, push-tagged, push-latest, custom-tag=java',
+          'ssh, push-tagged, push-latest',
+          'xrootd, push-tagged, push-latest',
+          'xrootd-noauth, push-tagged, push-latest',
+          'fs, rucio-clients:release-#TAG, push-tagged, push-latest'
+        ]
+      fail-fast: false
+    
+    steps:      
+      - name: Checkout the containers repository
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+
+      - name: Fetch all branches
+        shell: bash
+        run: |
+          REPO_URL=$(echo 'https://github.com/${{ github.repository_owner }}/containers.git') 
+          BRANCHES=$(git ls-remote --heads $REPO_URL | awk -F '\t' '{print $NF}' | cut -f3- -d'/')
+          git fetch origin $BRANCHES
+      
+      - name: Get the release tag from GitHub
+        id: release_tag
+        run: echo ::set-output name=version::${GITHUB_REF/refs\/tags\//}
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v1
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v1 
+        with:
+          username: ${{ secrets.DOCKER_HUB_USERNAME }}
+          password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
+      
+      - name: Generate Docker Image Names
+        id: release
+        shell: bash
+        run: |
+          # There are two types of releases managed by this script. If the git tag for the release 
+          # is of the form `<semantic_version>`, then the release is a standard rucio release.
+          # If the git tag for the release is of the form `webui-<semantic_version>`, then the release is a WebUI release.
+          # Standard rucio releases are tagged with the rucio release version and DO NOT build the WebUI.
+          # WebUI releases are tagged with the WebUI release version and build the webui containers only.
+          #
+          # Below is the usage of the script to describe the tagging scheme used by the Docker Images
+          #
+          # Generates the image tags for the containers present in the containers repository
+          # The input is in CSV format:
+          # {sub_directory}, {parent_image}, {config_paramms}
+          # where,
+          #     sub_directory: name of the sub_directory in rucio/containers reposistory that contains
+          #                    the Dockerfile. If the Dockerfile has a different name, then the full path to the Dockerfile must be specified.
+          #                    For example, fts-cron/Dockerfile_cpp is also a valid value.
+          #     parent_image:  OPTIONAL name of the parent image that is required to be available on Docker Hub before building this image.
+          #                    Parent images must begin with rucio- and can specify the #TAG placeholder to refer to the current tag being pushed.
+          #                    For example, rucio-clients:release-#TAG
+          #     config_params: These are described in the CONFIG section and are used to generate 
+          #                    the image tags that will be pushed to DockerHub for the given {sub_directory}
+          #
+          # CONFIG PARAMS
+          # -------------
+          # prepend-rucio: adds `rucio-` to image name
+          # prepend-release: adds `release-` to image name
+          # push-tagged: adds the $GIT_TAG to image name
+          # push-latest: if present, and the latest commit SHA on master branch 
+          #              matches the last commmit SHA of the current tag, adds release 
+          #              version to image name.
+          # force-latest: if present, the latest tag will be force pushed to Docker Hub
+          # latest-only: if present, only the latest tag will be pushed to Docker Hub
+          # custom-tag=value: If present, the value of the custom tag will be appended to the image tag.
+          #                   If push-latest is also present, then the custom tag will be appended to the latest tag as well.
+          #                   For example, custom-tag=java will append `java` to the image name.
+          #
+          # The following truth table is used to determine the Docker Hub tag
+          # The configuration parammeters are: preprend_release, push_tagged
+          # | prepend_release 	| push_tagged 	| image_tag         	|
+          # |-----------------	|-------------	|-------------------	|
+          # | 0               	| 0           	| Check for latest tag|
+          # | 0               	| 1           	| :$GIT_TAG         	|
+          # | 1               	| 0           	| Config Error      	|
+          # | 1               	| 1           	| :release-$GIT_TAG 	|
+
+          CONTEXT=$(echo "${{ matrix.context }}")
+          CONTEXT_DIR=$(echo "${CONTEXT}" | cut -d, -f1 )
+          PARENT=$(echo "${CONTEXT}" | cut -d, -f2 | xargs)
+          GIT_TAG=${{ steps.release_tag.outputs.version }}
+          BASE_TAG="${{ github.repository_owner}}/"
+          PARENT_IMAGE_AVAILIBILITY_INTERVAL=60
+          MAX_ATTEMPTS=10
+          GIT_TAG_COMMIT_SHA=$(echo $(git rev-list -n 1 $GIT_TAG))
+          GIT_MASTER_LATEST_COMMIT_SHA=$(echo $(git ls-remote --heads origin | grep master  |  awk -F '\t' '{print $1}'))
+
+          # if git tag begins with webui-{semantic version}, then treat context as a webui release
+          if [[ $GIT_TAG =~ ^webui-([0-9]+.[0-9]+.[0-9]+)$ ]]; then
+              GIT_TAG="${BASH_REMATCH[1]}"
+              if [[ ! $CONTEXT_DIR =~ .*"webui".* ]]; then
+                  echo "This is a Rucio WebUI release. Building of other containers is therefore skipped!"
+                  exit 0
+              fi
+          else 
+              if [[ $CONTEXT_DIR =~ .*"webui".* ]]; then
+                  echo "This is a standard Rucio release. Building of WebUI container is therefore skipped!"
+                  exit 0
+              fi
+          fi
+
+          if [[ -d $CONTEXT_DIR ]]; then
+            if [[ -f "${CONTEXT_DIR}/Dockerfile" ]]; then 
+                FILE="Dockerfile"
+            else
+                echo "Dockerfile not found in $CONTEXT_DIR. Exiting!"
+                exit 1
+            fi
+          elif [[ -f $CONTEXT_DIR ]]; then
+            FILE="$(basename -- $CONTEXT_DIR)"
+            CONTEXT_DIR="$(dirname $CONTEXT_DIR)"
+          else
+            echo "$CONTEXT_DIR is not a file or directory. Exiting"
+            exit 1
+          fi
+
+          if [[ ${CONTEXT} =~ .*"prepend-rucio".* ]]; then
+            BASE_TAG+="rucio-$CONTEXT_DIR"
+          else
+            BASE_TAG+=$CONTEXT_DIR
+          fi
+
+          LATEST_TAG=''
+          IMAGE_TAG+=''
+          TAGS_TO_PUSH=''
+
+          if [[ ! ${CONTEXT} =~ .*"prepend-release".* && ! ${CONTEXT} =~ .*"push-tagged".* ]]; then
+            echo "Image with release tag will not be pushed! Will check if image with the latest tag can be pushed"
+          elif [[ ! ${CONTEXT} =~ .*"prepend-release".* && ${CONTEXT} =~ .*"push-tagged".* ]]; then
+            IMAGE_TAG+="$BASE_TAG:$GIT_TAG"
+          elif [[ ${CONTEXT} =~ .*"prepend-release".* && ! ${CONTEXT} =~ .*"push-tagged".* ]]; then
+            echo "Config Error!!"
+          else
+            IMAGE_TAG+="$BASE_TAG:release-$GIT_TAG"
+          fi
+
+          if [[ "${CONTEXT}" =~ .*"push-latest".* &&  $GIT_MASTER_LATEST_COMMIT_SHA == $GIT_TAG_COMMIT_SHA  ]]; then
+              echo "There's a match between the SHA of latest commit on Master ($GIT_MASTER_LATEST_COMMIT_SHA) and \
+                    latest commit on current tag $TAG ($GIT_TAG_COMMIT_SHA)"
+              echo "An image with latest tag will be pushed to Docker Hub"
+              LATEST_TAG="$BASE_TAG:latest"
+          elif [[ "${CONTEXT}" =~ .*"push-latest".*  ]]; then
+              echo "Note: Image tagged latest will not be pushed as commit SHA's on master and current tag do not match!!"
+              echo "Latest commit on Master: $GIT_MASTER_LATEST_COMMIT_SHA"
+              echo "Latest commit on $GIT_TAG: $GIT_TAG_COMMIT_SHA"
+          fi
+
+          if [[ "${CONTEXT}" =~ .*"force-latest".* ]]; then
+            echo "Will force push the latest tag"  
+            LATEST_TAG="$BASE_TAG:latest"
+          fi
+
+          if [[ $CONTEXT =~ custom-tag=([-a-zA-Z0-9]*) ]]; then
+            CUSTOM_TAG="${BASH_REMATCH[1]}"
+            if [[ -z $IMAGE_TAG ]]; then
+                  IMAGE_TAG="${BASE_TAG}:${CUSTOM_TAG}"
+            else
+                  IMAGE_TAG="${IMAGE_TAG}-${CUSTOM_TAG}"
+            fi
+            
+            if [[ -z $LATEST_TAG ]]; then
+                  LATEST_TAG="${BASE_TAG}:latest-${CUSTOM_TAG}"
+            else
+                  LATEST_TAG="${LATEST_TAG}-${CUSTOM_TAG}"
+            fi
+          else
+              echo "No custom tag detected!"
+          fi
+          
+          echo $CONTEXT
+
+          if [[ -z "$IMAGE_TAG" && -z "$LATEST_TAG" ]]; then
+              TAGS_TO_PUSH=''
+          elif [[ "$IMAGE_TAG" && -z "$LATEST_TAG" ]]; then
+              TAGS_TO_PUSH=$IMAGE_TAG
+          elif [[ -z "$IMAGE_TAG" && "$LATEST_TAG" ]]; then
+              TAGS_TO_PUSH=$LATEST_TAG
+          else
+              TAGS_TO_PUSH=$IMAGE_TAG,$LATEST_TAG
+          fi
+
+          if [[ "${CONTEXT}" =~ .*"latest-only".* ]]; then
+            echo "Only the latest tag will be pushed"  
+            TAGS_TO_PUSH="$BASE_TAG:latest"
+          fi
+
+          if [[ $PARENT == rucio-* ]]; then 
+            if [[ ${PARENT} =~ .*"#TAG".* ]]; then
+            PARENT=${PARENT/\#TAG/$GIT_TAG}
+            fi
+
+            PARENT="${{ github.repository_owner }}/${PARENT}"
+            for i in $(seq 1 1 $MAX_ATTEMPTS)
+            do
+                echo "Attempt ${i}: Waiting for $PARENT to be available on Docker Hub"
+                docker pull $PARENT > /dev/null && echo "$PARENT found" && break || echo "Parent not found! Waiting $PARENT_IMAGE_AVAILIBILITY_INTERVAL seconds"
+                sleep $PARENT_IMAGE_AVAILIBILITY_INTERVAL
+
+                if [[ $i == $MAX_ATTEMPTS ]]; then
+                    echo "$PARENT image is not available on Docker Hub. Dependent images will not be pushed."
+                    exit 1
+                fi
+            done
+          else
+            echo "No parent image has been specified for $CONTEXT_DIR. Parent images are the second parameter in the csv build description and must begin with 'rucio-'."
+          fi
+  
+
+          echo ::set-output name=git_tag::$GIT_TAG
+          echo ::set-output name=tags::$TAGS_TO_PUSH
+          echo ::set-output name=context_dir::$CONTEXT_DIR
+          echo ::set-output name=file::$FILE
+
+          echo "For tag: $GIT_TAG, the following images will be pushed: $TAGS_TO_PUSH"
+
+      - name: Build and push
+        if: steps.release.outputs.tags != ''
+        id: docker_build
+        uses: docker/build-push-action@v2
+        with:
+          context: ./${{ steps.release.outputs.context_dir }}
+          file: ./${{ steps.release.outputs.context_dir }}/${{ steps.release.outputs.file }}
+          push: true
+          tags: '${{ steps.release.outputs.tags }}'
+          build-args: TAG=${{ steps.release.outputs.git_tag }}
+  

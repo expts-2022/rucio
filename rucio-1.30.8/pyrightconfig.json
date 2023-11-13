@@ -1,0 +1,12 @@
+{
+    "include": [
+        "lib"
+    ],
+    "exclude": [
+        "lib/rucio/db",
+        "lib/rucio/tests",
+    ],
+    "pythonVersion": "3.10",
+    "typeCheckingMode": "basic",
+    "useLibraryCodeForTypes": true
+}

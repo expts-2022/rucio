@@ -1,5 +1,7 @@
 #!/bin/bash
+
 # -*- coding: utf-8 -*-
+# Author: Syed Hasan (minor modications to this code from CERN)
 # Copyright European Organization for Nuclear Research (CERN) since 2012
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -33,6 +35,9 @@ echo "Creating RSEs"
 
 # Step zero, get a compliant proxy. The key must NOT be group/other readable
 (KEY=$(mktemp); cat /opt/rucio/etc/userkey.pem > "$KEY"; xrdgsiproxy init -valid 9999:00 -cert /opt/rucio/etc/usercert.pem -key "$KEY"; rm -f "$KEY")
+
+#rucio-admin account add rucio_user
+#rucio-admin account add-identity --account rucio_user --type USERPASS --username syed --password amai$499012
 
 # First, create the RSEs
 rucio-admin rse add XRD1
@@ -94,30 +99,49 @@ rucio-admin account set-limits root SSH1 -1
 rucio-admin scope add --account root --scope test
 
 # Create initial transfer testing data
-dd if=/dev/urandom of=file1 bs=10M count=1
-dd if=/dev/urandom of=file2 bs=10M count=1
-dd if=/dev/urandom of=file3 bs=10M count=1
-dd if=/dev/urandom of=file4 bs=10M count=1
+dd if=/dev/urandom of=/home/rucio_user/swiss-prototypes/data/file1 bs=10M count=1
+dd if=/dev/urandom of=/home/rucio_user/swiss-prototypes/data/file2 bs=10M count=1
+dd if=/dev/urandom of=/home/rucio_user/swiss-prototypes/data/file3 bs=10M count=1
+dd if=/dev/urandom of=/home/rucio_user/swiss-prototypes/data/file4 bs=10M count=1
 
-XrdSecGSISRVNAMES=xrd1 rucio upload --rse XRD1 --scope test file1
-XrdSecGSISRVNAMES=xrd1 rucio upload --rse XRD1 --scope test file2
-XrdSecGSISRVNAMES=xrd2 rucio upload --rse XRD2 --scope test file3
-XrdSecGSISRVNAMES=xrd2 rucio upload --rse XRD2 --scope test file4
+#XrdSecGSISRVNAMES=xrd1 
+rucio upload --rse XRD1 --scope test /home/rucio_user/swiss-prototypes/data/file1
+#XrdSecGSISRVNAMES=xrd1 
+rucio upload --rse XRD1 --scope test /home/rucio_user/swiss-prototypes/data/file2
+#XrdSecGSISRVNAMES=xrd2 
+rucio upload --rse XRD2 --scope test /home/rucio_user/swiss-prototypes/data/file3
+#XrdSecGSISRVNAMES=xrd2 
+rucio upload --rse XRD2 --scope test /home/rucio_user/swiss-prototypes/data/file4
+
+# FTS Check
+fts-rest-whoami -v -s https://fts:8446
+
+# Delegate credentials to FTS
+fts-rest-delegate -vf -s https://fts:8446 -H 9999
 
 rucio add-dataset test:dataset1
-rucio attach test:dataset1 test:file1 test:file2
+rucio attach test:dataset1 test:file1 test:file2 test:file3
 
-rucio add-dataset test:dataset2
-rucio attach test:dataset2 test:file3 test:file4
+rule_id1=$(rucio add-rule test:dataset1 1 XRD3)
 
-rucio add-container test:container
-rucio attach test:container test:dataset1 test:dataset2
 
-rucio add-rule test:container 1 XRD3
+# Check if the command was successful and the variable is not empty
+if [[ $? -eq 0 && -n "$rule_id1" ]]; then
+    echo "Rule ID: $rule_id1"
 
-# Create complication
-rucio add-dataset test:dataset3
-rucio attach test:dataset3 test:file4
+else
+    echo "Failed to create rule or capture rule ID"
+fi
+
+
+rucio rule-info $rule_id1
+
+#running conveyor commands for replication to happen
+rucio-conveyor-submitter --run-once
+rucio-conveyor-poller --run-once --older-than 0
+rucio-conveyor-finisher --run-once
+
+rucio rule-info $rule_id1
 
 # FTS Check
 fts-rest-whoami -v -s https://fts:8446

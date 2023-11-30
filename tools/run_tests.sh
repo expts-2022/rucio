@@ -111,6 +111,8 @@ if test ${lint}; then
     fi
 fi
 
+sleep 10
+
 if test ${keep_db}; then
     echo 'Keeping database tables'
 else

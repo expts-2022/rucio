@@ -27,7 +27,9 @@ services:
       - X509_USER_KEY=/opt/rucio/etc/userkey.pem
       - RDBMS
   rucio:
-    image: docker.io/rucio/rucio-dev:latest-alma9
+    #image: docker.io/rucio/rucio-dev:latest-alma9
+    #image: rucio-shasan:latest
+    image: rucio-dev-user-as-root:latest 
     entrypoint: ["/rucio_source/etc/docker/dev/rucio_entrypoint.sh"]
     command: ["httpd","-D","FOREGROUND"]
     volumes:
@@ -45,6 +47,8 @@ services:
       - ../../../lib:/opt/rucio/lib:Z
       - ../../../tests:/opt/rucio/tests:Z
       - ../../../:/rucio_source:ro
+      - /home/shasan/swiss-prototypes:/home/rucio_user/swiss-prototypes
+      #  - /home/shasan/swiss-prototypes:/home/rucio_user/swiss-prototypes
     environment:
       - RUCIO_SOURCE_DIR=/rucio_source
       - X509_USER_CERT=/opt/rucio/etc/usercert.pem
@@ -298,3 +302,5 @@ services:
       - IAM_DB_NAME=iam_db
       - IAM_DB_USERNAME=iam
       - IAM_DB_PASSWORD=secret
+
+

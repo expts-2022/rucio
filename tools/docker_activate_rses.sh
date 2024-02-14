@@ -99,19 +99,19 @@ rucio-admin account set-limits root SSH1 -1
 rucio-admin scope add --account root --scope test
 
 # Create initial transfer testing data
-dd if=/dev/urandom of=/home/rucio_user/swiss-prototypes/data/file1 bs=10M count=1
-dd if=/dev/urandom of=/home/rucio_user/swiss-prototypes/data/file2 bs=10M count=1
-dd if=/dev/urandom of=/home/rucio_user/swiss-prototypes/data/file3 bs=10M count=1
-dd if=/dev/urandom of=/home/rucio_user/swiss-prototypes/data/file4 bs=10M count=1
+dd if=/dev/urandom of=/home/rucio_user/rucio-desy-k8/data/file1 bs=10M count=1
+dd if=/dev/urandom of=/home/rucio_user/rucio-desy-k8/data/file2 bs=10M count=1
+dd if=/dev/urandom of=/home/rucio_user/rucio-desy-k8/data/file3 bs=10M count=1
+dd if=/dev/urandom of=/home/rucio_user/rucio-desy-k8/data/file4 bs=10M count=1
 
 #XrdSecGSISRVNAMES=xrd1 
-rucio upload --rse XRD1 --scope test /home/rucio_user/swiss-prototypes/data/file1
+rucio upload --rse XRD1 --scope test /home/rucio_user/rucio-desy-k8/data/file1
 #XrdSecGSISRVNAMES=xrd1 
-rucio upload --rse XRD1 --scope test /home/rucio_user/swiss-prototypes/data/file2
+rucio upload --rse XRD1 --scope test /home/rucio_user/rucio-desy-k8/data/file2
 #XrdSecGSISRVNAMES=xrd2 
-rucio upload --rse XRD2 --scope test /home/rucio_user/swiss-prototypes/data/file3
+rucio upload --rse XRD2 --scope test /home/rucio_user/rucio-desy-k8/data/file3
 #XrdSecGSISRVNAMES=xrd2 
-rucio upload --rse XRD2 --scope test /home/rucio_user/swiss-prototypes/data/file4
+rucio upload --rse XRD2 --scope test /home/rucio_user/rucio-desy-k8/data/file4
 
 # FTS Check
 fts-rest-whoami -v -s https://fts:8446
